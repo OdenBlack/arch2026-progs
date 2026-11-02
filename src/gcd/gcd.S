@@ -4,10 +4,10 @@
 
 #   a0 預設為 a, a1 預設為 b
 gcd_u32_asm:
-    /* if (a == 0) return b;*/
+    # if (a == 0) return b;
     beq a0, zero, .Lreturn_b
 
-    /* if (b == 0) return a;*/
+    # if (b == 0) return a;
     beq a1, zero, .Lreturn_a
 
     # 前往兩個輸入都不是零的處理區
@@ -18,7 +18,6 @@ gcd_u32_asm:
     addi a0, a1, 0
 
 .Lreturn_a:
-    # 返回呼叫者
     jalr zero, 0(ra)
 
 .Lnonzero:
@@ -43,9 +42,10 @@ gcd_u32_asm:
     # 回到迴圈開頭
     jal zero, .Lcommon_loop
 
+
 .Lmain_loop:
     # 實作 C 版本的主迴圈
-    # t0 = common_twos，t1 用於奇偶判斷
+    # t0 = common_twos，t1 用於奇偶1
     beq  a0, zero, .Times_two_power
     beq  a1, zero, .Times_two_power
 
@@ -54,21 +54,29 @@ gcd_u32_asm:
     beq   t1, zero, a_even
     andi  t1, a1, 1
     beq   t1, zero, b_even
+
+.Lmain_loop_2:
+    beq   a0, a1, .Lrestore     # 如果此時 a b 相同，一定要直接跳轉結果輸出，否則會無限迴圈
     bltu  a0, a1,   b_larger
-    sub   a0, a0, a1
-    j     .Lmain_loop
+    sub   a0, a0, a1            # 相減後的 a 一定為偶數，可以進到除以 2 的 helper
 
 a_even:
+    # 處理到變成奇數為止
     srli a0, a0, 1
-    j    .Lmain_loop
+    andi t1, a0, 1
+    beq  t1, zero, a_even 
+    j     .Lmain_loop_2
 
 b_even:
+    # 處理到變成奇數為止
     srli a1, a1, 1
-    j    .Lmain_loop
+    andi t1, a1, 1
+    beq  t1, zero, b_even 
+    j     .Lmain_loop_2
 
 b_larger:
     sub  a1, a1, a0
-    j    .Lmain_loop
+    j    b_even     # 相減後一定為偶數，可以直接跳轉除以 2 的 helper
 
 .Times_two_power:
     # a 非零時，直接用 a0 作為結果。
@@ -84,6 +92,6 @@ b_larger:
     # 返回呼叫者。
     jalr zero, 0(ra)
 
-    .size gcd_u32_asm, .-gcd_u32_asm  /*提供函式大小資訊的組譯指示，不是 CPU 執行的指令*/
+    .size gcd_u32_asm, .-gcd_u32_asm  # 提供函式大小資訊的組譯指示，不是 CPU 執行的指令
 
 #   最後的 a0 為 gcd 輸出
