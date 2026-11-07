@@ -3,6 +3,11 @@ title: 2026 Computer Architecture HW2
 
 ---
 
+---
+title: 2026 Computer Architecture HW2
+
+---
+
 # 2026 Computer Architecture HW2
 
 [toc]
@@ -504,8 +509,31 @@ O2 編譯效能如下，可以看到在利用相減性質之後，平均 costs �
 
 ### 3-1. Logical Caculation
 
+邏輯運算中共有三種動作
+1. op1: 位元加法
+2. op2: 位元減法
+3. op3: 兩數相加除以2
 
+__op1__: 計算 a + b，結果保留低 32 位元，並透過指標 n 回傳迴圈執行次數。加法可以拆成兩部分：
+```
+uint32_t carry = (a & b) << 1;
+a = a ^ b;
+b = carry;
+```
 
+* `a ^ b`：計算不含進位的加法結果。
+* `a & b`：找出兩個輸入同時為 1、需要產生進位的位置。
+* 左移一位：將進位送到下一個位元。重複處理直到進位 b 變成 0。
+
+__op2__: op2 計算 a - b，並保留低 32 位元。由於運算元都是 uint32_t，當結果小於零時，會依無號整數規則回繞，如下。因此這邊可以使用 a - b 的方式計算。
+```
+0 - 1 → 0xFFFFFFFF
+3 - 8 → 0xFFFFFFFB
+```
+
+__op3__: op3 計算兩個輸入完整數學和的平均值，再向下取整。因為 a + b 可能先發生 32 位元回繞，丟失最高位後再右移，就無法得到正確平均值。因此先各自除以 2，避免相加溢位；最後補回兩個奇數各自右移時，合計丟掉的那個 1。
+
+---
 
 ### 3-2. Q11.20 reprensation and q_mul calculation (C Implementation)
 __Q11.20__ : Q11.20 fixed-point 為沒有浮點數運算硬體的環境提供能用整數運算處理浮點數的能力。該算法將浮點數放大 $2^{20}$ 倍，因此程式可以用整數儲存浮點數。以 0.75 為例，$0.75 × 2^{20} = 786432$，因此 0.75 會以 786432 被表示。在 Q11.20 中，相鄰兩個可表示數值的距離固定為 $1 / 2^{20} ≈ 0.000000953674$。該表示法中的最小值、最大值、相鄰數值的間距可以被表示成如下
@@ -621,7 +649,7 @@ make: *** [Makefile:147: build/fixed/O2/fixed.elf] Error 1
 
 `q_mul` 可以大致分為四個步驟
 1. 先記錄兩個乘數 a, b 的正負號
-2. 用位移與加法計算乘積，每次迴圈都做三件事
+2. 將被乘數與乘數分成高32位元與低32位元，並使用位移與加法計算乘積，
     - 檢查乘數 ub 的最低位，若為 1, 就累加目前的被乘數
     - 被乘數左移一位，代表乘以 2
     - 乘數右移一位，準備檢查下一個位元
@@ -633,7 +661,6 @@ make: *** [Makefile:147: build/fixed/O2/fixed.elf] Error 1
 ```C=
 qfixed_t q_mul(qfixed_t a , qfixed_t b)
 {
-    /* */
     /* 1. 記錄乘積的正負號，取得輸入的絕對值 */
     int negative = (a < 0) != (b < 0);
 
@@ -647,25 +674,38 @@ qfixed_t q_mul(qfixed_t a , qfixed_t b)
         ub = 0u - ub;
     
     
-    /* 2. 用位移與加法計算乘積 */
-    uint64_t multiplicand = ua;
-    uint64_t product = 0;
+    /* 2. 以高、低兩個 32 位元進行位移加法乘法 */
+    uint32_t mul_lo = ua;   // 目前被乘數的低 32 位元
+    uint32_t mul_hi = 0;    // 目前被乘數的高 32 位元
+
+    uint32_t prod_lo = 0;   // 累積乘積的低 32 位元
+    uint32_t prod_hi = 0;   // 累積乘積的高 32 位元
+
 
     while (ub != 0) {
-        if (ub & 1u)
-            product += multiplicand;
+        if (ub & 1u) {
+            uint32_t old_lo = prod_lo;
 
-        multiplicand <<= 1;
-        ub >>= 1;
+            prod_lo += mul_lo;
+            prod_hi += mul_hi + (prod_lo < old_lo); //加法進位: prod_lo < old_lo 判斷低 32 位元相加後是否回繞；如果有，就向高 32 位元加上 1
+        }
+
+        mul_hi = (mul_hi << 1) | (mul_lo >> 31); // `mul_lo >> 31` 取出低半部原本的最高位，補進高半部左移後的最低位。因此必須先更新 mul_hi, 再更新 mul_lo。
+        mul_lo <<= 1;
+
+        ub >>= 1; // 將乘數右移，準備檢查下一位
     }
 
-    /* 3. 還原正負號 */
+    /* 合併高、低兩半，交給後面的符號與捨入處理 */
+    uint64_t product = ((uint64_t)prod_hi << 32) | prod_lo;
+
+    /* 3. 還原乘積的正負號 */
     int64_t signed_product = (int64_t)product;
 
     if (negative)
         signed_product = -signed_product;
 
-    /* 4. 轉回 Q11.20 */
+    /* 4. 捨入並轉回 Q11.20 */
     return (qfixed_t)(
         (signed_product + (INT64_C(1) << (Q - 1))) >> Q
     );
@@ -695,8 +735,302 @@ uint32_t op2(uint32_t a, uint32_t b){           //位元減法 (a-b), 使用二�
 ```
 執行測試結果如下
 ![image](https://hackmd.io/_uploads/HJFh4Bq6Gx.png)
-`fixed_c_perf` 的部分已通過，目前僅剩下 RV32I 需要實作。
+`fixed_c_perf` 的部分已通過，其餘測試 (O1、O3、Os) 也通過。目前僅剩下 RV32I 需要實作。
 
 ---
 
 ### 3-4. Logical Caculation and q_mul calculation ( RV32I Implementation )
+以下為 `op1`、`op2`、`op3`、`q_mul` 的實作。
+
+op1: 
+```assembly=
+.globl  op1_asm
+    .type   op1_asm, @function
+    .align  2
+op1_asm:
+
+     li t1, 0                     # 初始化進行次數計數器為 0
+
+
+# a0 : a, a1 : b
+.Lop1_loop:
+
+    beq     a1, zero, .Lop1_done
+
+    and     t0, a0, a1             # t0 = a0 & a1
+    slli    t0, t0, 1              # t0 左移 1 位，得到 carry
+
+    xor     a0, a0, a1             # a0 = a0 ^ a1
+    addi    a1, t0, 0              # a1 = t0
+
+    addi    t1, t1, 1              # t1 加 1
+
+    j       .Lop1_loop
+
+.Lop1_done:
+    sw      t1, 0(a2)
+    ret
+    .size   op1_asm, .-op1_asm     # 告訴編譯器 op1_asm 函式有多大，單位是位元組
+
+```
+
+op2:
+```assembly=
+ .globl  op2_asm
+    .type   op2_asm, @function
+    .align  2
+op2_asm:
+    sub     a0, a0, a1
+    ret
+    .size   op2_asm, .-op2_asm
+```
+
+op3:
+```assembly=
+.globl  op3_asm
+    .type   op3_asm, @function
+    .align  2
+
+op3_asm:
+    and     t0, a0, a1
+    andi    t0, t0, 1
+    srli    a0, a0, 1
+    srli    a1, a1, 1
+    add     a1, a1, t0
+    add     a0, a0, a1
+    ret
+.size   op3_asm, .-op3_asm
+
+#   ---------------------
+
+    .globl  q_mul_asm
+    .type   q_mul_asm, @function
+    .align  2
+
+```
+
+q_mul:
+```assembly=
+    .globl  q_mul_asm
+    .type   q_mul_asm, @function
+    .align  2
+
+
+q_mul_asm:
+    # t3 = negative    
+    # 如果正負號不一樣，兩者的 MSB 取 XOR 將會等於 1
+    xor     t3, a0, a1
+
+    # 讓 a, b 變成絕對值
+    bge   a0, zero, is_b_negative
+    sub     a0, zero, a0
+    
+
+is_b_negative:
+    bge     a1, zero, prepare_lo_li
+    sub     a1, zero, a1
+
+
+prepare_lo_li:
+    li      t0, 0       # mul_hi = 0
+    li      t1, 0       # prod_lo = 0
+    li      t2, 0       # prod_hi = 0
+
+
+q_mul_loop:    
+    beq     a1, zero, restore_symbol
+
+    # if (ub & 1u)
+    andi    t4, a1, 1
+    beq     t4, zero, q_mul_loop_2
+
+    # if 成立後之運算
+    add     t4, t1, zero    # old_lo = prod_lo;
+    add     t1, t1, a0
+    
+    sltu    t5, t1, t4      # 無號比較：新 prod_lo < 舊 prod_lo？
+    add     t2, t2, t0      # prod_hi += mul_hi
+    add     t2, t2, t5      # prod_hi += (prod_lo <  old_lo)
+
+    # if 內容結束，可進入迴圈的第 2 部分
+
+q_mul_loop_2:
+    srli    t4, a0, 31      # 暫存 mul_lo 原本的最高位
+    slli    t0, t0, 1       #  (mul_hi << 1)
+    or      t0, t0, t4      #  mul_hi
+    
+    # mul_lo <<= 1;
+    slli    a0, a0, 1      #  mul_lo <<= 1;
+
+    # ub >>= 1;
+    srli    a1, a1, 1
+
+    j       q_mul_loop
+
+
+# 還原乘積的正負號
+restore_symbol:
+    bge     t3, zero, round
+
+    # -1 的立即數會被符號延伸成全為 1 的位元
+    xori    t1, t1, -1      # 低半部逐位取反
+    xori    t2, t2, -1      # 高半部逐位取反
+    
+
+    # 低半部 + 1，然後確認是否有進位傳到高半部
+    add     t4, zero, t1  # 低半部尚未 + 1
+    addi    t1, t1,   1
+    bltu    t1, t4, ho_add_carry
+    j       round
+
+ho_add_carry:
+    addi    t2, t2, 1
+
+round:
+    li      t4, 1
+    slli    t4, t4, 19
+
+    add     t5, zero, t1  # 低半部尚未加上補償值
+    add     t1, t1, t4
+    bltu    t1, t5, ho_add_carry_2
+    j       round_2       # 沒有進位，跳過高半部加一
+
+ho_add_carry_2:
+    addi    t2, t2, 1
+
+round_2:
+    
+    srli    t1, t1, 20
+    slli    t2, t2, 12
+    or     a0, t1, t2
+
+    ret
+    .size   q_mul_asm, .-q_mul_asm
+```
+O2編譯測試結果如下
+![image](https://hackmd.io/_uploads/HkESem2pGl.png)
+O1、O3、Os編譯的測試結果也與O2編譯測試相同，因此接下來直接查看 grade 的測試結果，使用「(cycles − overhead) ÷ n」計算平均每次呼叫成本
+![image](https://hackmd.io/_uploads/HyL9lmhTMl.png)
+| 函式 |  C (best build) | C cycles／次 | RV32I cycles／次 | 結果 |
+|:---:|:---:|:---:|:---:|:---:|
+| `op1` | O2 | 24.7 | 27.4 | RV32I 較慢 |
+| `op2` | — | 與 RV32I 相同 | 與 C 相同 | 通過 |
+| `op3` | — | 與 RV32I 相同 | 與 C 相同 | 通過 |
+| `q_mul` | O1 | 223.5 | 248.4 | RV32I 較慢 |
+
+主要問題出現於 `op1` 以及 `q_mul` 的 RV32I 實作較 C (best build)的實作慢，因此我們將針對上述兩個函式進行優化。
+
+---
+
+__op1優化__: 首先在 `.Lop1_loop` 中，每一輪結束都先執行 `j`，回到頂端再執行 `beq`。這邊我們改變成
+1. 進入迴圈前，先檢查一次 b == 0
+2. 迴圈結尾直接判斷是否需要繼續
+優化實作如下
+```assembly=
+op1_asm:
+
+     li t1, 0                     # 初始化進行次數計數器為 0
+    beq     a1, zero, .Lop1_done
+
+# a0 : a, a1 : b
+.op1_loop:
+
+    and     t0, a0, a1             # t0 = a0 & a1
+    slli    t0, t0, 1              # t0 左移 1 位，得到 carry
+
+    xor     a0, a0, a1             # a0 = a0 ^ a1
+    addi    a1, t0, 0              # a1 = t0
+
+    addi    t1, t1, 1              # t1 加 1
+
+    bne     a1, zero, .op1_loop
+```
+優化完成後進行 grade 測試，結果如下
+![image](https://hackmd.io/_uploads/HkgU4D2pzx.png)
+
+op1 優化完成，接下來將針對 q_mul 優化
+
+---
+
+__q_mul優化__: 首先優化 `q_mul_loop` 的迴圈判斷，與 op1 的思路相同，入口檢查一次、尾端決定是否繼續迴圈。優化如下
+```assembly=
+prepare_lo_li:
+    li      t0, 0       # mul_hi = 0
+    li      t1, 0       # prod_lo = 0
+    li      t2, 0       # prod_hi = 0
+    beq     a1, zero, restore_symbol
+
+
+q_mul_loop:    
+    # if (ub & 1u)
+    andi    t4, a1, 1
+    beq     t4, zero, q_mul_loop_2
+
+    # if 成立後之運算
+    add     t4, t1, zero    # old_lo = prod_lo;
+    add     t1, t1, a0
+    
+    sltu    t5, t1, t4      # 無號比較：新 prod_lo < 舊 prod_lo？
+    add     t2, t2, t0      # prod_hi += mul_hi
+    add     t2, t2, t5      # prod_hi += (prod_lo <  old_lo)
+
+    # if 內容結束，可進入迴圈的第 2 部分
+
+
+q_mul_loop_2:
+    srli    t4, a0, 31      # 暫存 mul_lo 原本的最高位
+    slli    t0, t0, 1       #  (mul_hi << 1)
+    or      t0, t0, t4      #  mul_hi
+    
+    # mul_lo <<= 1;
+    slli    a0, a0, 1      #  mul_lo <<= 1;
+
+    # ub >>= 1;
+    srli    a1, a1, 1
+    
+    bne    a1, zero, q_mul_loop
+```
+grade 執行結果如下，q_mul 從約 248.4 降到 228.2 cycles／次，減少約 8.1%，效能顯著增加。
+![image](https://hackmd.io/_uploads/BJD0Iw3TGl.png)
+
+接下來對累加區段中「保存舊低半部」的指令進行優化。
+```assembly=
+# if 成立後之運算
+    add     t4, t1, zero    # old_lo = prod_lo;
+    add     t1, t1, a0
+    
+    sltu    t5, t1, t4      # 無號比較：新 prod_lo < 舊 prod_lo？
+    add     t2, t2, t0      # prod_hi += mul_hi
+    add     t2, t2, t5      # prod_hi += (prod_lo <  old_lo)
+```
+這邊的想法可以改成如下: 對兩個 32 位元無號數相加，發生進位時，回繞後的結果會小於任一個加數，例如:
+1. 沒有進位：
+    - 5 + 3 = 8
+    - 8 < 3 不成立 → carry = 0
+2. 有進位：
+    - 0xFFFFFFFF + 3 → 低 32 位元為 2
+    - 2 < 3 成立 → carry = 1
+
+因此我們可以直接比較相加後的結果 (t1) 以及加數 (a0)，若 t1 小於 a0，則代表進位發生，t5 值為 1，反之為 0。優化實作如下
+```assembly=
+q_mul_loop:    
+    # if (ub & 1u)
+    andi    t4, a1, 1
+    beq     t4, zero, q_mul_loop_2
+
+    # if 成立後之運算
+    add     t1, t1, a0      
+    sltu    t5, t1, a0      # 無號比較：新 prod_lo < 加數 a0 ?
+    add     t2, t2, t0      # prod_hi += mul_hi
+    add     t2, t2, t5      # prod_hi += (prod_lo <  old_lo)
+
+    # if 內容結束，可進入迴圈的第 2 部分
+```
+grade 測試如下
+![image](https://hackmd.io/_uploads/r1gWsjvn6fe.png)
+
+至此，Logic Caculation and Q11.20 reprensation 的實作與優化結束
+
+---
+
+## 4. 
