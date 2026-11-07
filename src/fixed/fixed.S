@@ -17,12 +17,10 @@
 op1_asm:
 
      li t1, 0                     # 初始化進行次數計數器為 0
-
+    beq     a1, zero, .Lop1_done
 
 # a0 : a, a1 : b
-.Lop1_loop:
-
-    beq     a1, zero, .Lop1_done
+.op1_loop:
 
     and     t0, a0, a1             # t0 = a0 & a1
     slli    t0, t0, 1              # t0 左移 1 位，得到 carry
@@ -32,7 +30,7 @@ op1_asm:
 
     addi    t1, t1, 1              # t1 加 1
 
-    j       .Lop1_loop
+    bne     a1, zero, .op1_loop
 
 .Lop1_done:
     sw      t1, 0(a2)
@@ -91,24 +89,22 @@ prepare_lo_li:
     li      t0, 0       # mul_hi = 0
     li      t1, 0       # prod_lo = 0
     li      t2, 0       # prod_hi = 0
+    beq     a1, zero, restore_symbol
 
 
 q_mul_loop:    
-    beq     a1, zero, restore_symbol
-
     # if (ub & 1u)
     andi    t4, a1, 1
     beq     t4, zero, q_mul_loop_2
 
     # if 成立後之運算
-    add     t4, t1, zero    # old_lo = prod_lo;
-    add     t1, t1, a0
-    
-    sltu    t5, t1, t4      # 無號比較：新 prod_lo < 舊 prod_lo？
+    add     t1, t1, a0      
+    sltu    t5, t1, a0      # 無號比較：新 prod_lo < 加數 a0 ?
     add     t2, t2, t0      # prod_hi += mul_hi
     add     t2, t2, t5      # prod_hi += (prod_lo <  old_lo)
 
     # if 內容結束，可進入迴圈的第 2 部分
+
 
 q_mul_loop_2:
     srli    t4, a0, 31      # 暫存 mul_lo 原本的最高位
@@ -120,8 +116,8 @@ q_mul_loop_2:
 
     # ub >>= 1;
     srli    a1, a1, 1
-
-    j       q_mul_loop
+    
+    bne    a1, zero, q_mul_loop
 
 
 # 還原乘積的正負號
