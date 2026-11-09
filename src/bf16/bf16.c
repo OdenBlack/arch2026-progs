@@ -5,7 +5,7 @@ uint16_t bf16_from_f32(uint32_t f32bits)
     /* 1. 從 f32 取出 exponent 的部分*/
     uint32_t exponent = (f32bits >> 23) & 0xFFu;  //  0xffu 最低八個位元皆為 1
 
-    /* 2. 如果 exponent 全為 1, 則直接回傳高 16 位 */
+    /* 2. 如果 exponent 全為 1, 代表 NaN 與無限大, 則直接回傳高 16 位 */
     if (exponent == 0xFFu) {
         return (uint16_t) (f32bits >> 16);
     }
@@ -119,8 +119,8 @@ uint16_t bf16_mul(uint16_t a, uint16_t b)
 
     // 由於 sig_a * sig_b 落於 16384 ~ 65025
     // 除以 16384 後落於 1 ~ 4
-    // 若 1 <= 相乘後 sig < 2, 不需調整。
-    // 若 2 <= 相乘後 sig < 4, 相乘後 sig 除以 2, 指數加 1。
+    // 若 1 <= product/16384 < 2, 不需調整。
+    // 若 2 <= product/16384 < 4, 相乘後 sig 除以 2, 指數加 1。
     if (product >= 0x8000u) {
         product >>= 1;
         result_e++;
@@ -221,10 +221,8 @@ uint16_t bf16_sqrt(uint16_t a)
     // 因此 (root * root) / 128 ≈ sig
     // 透過「將候選值平方」來判斷它是否合適，不需要直接呼叫平方根函式
     // 即尋找 mid, 使的(mid * mid) / 128 <= sig
-    // 實作使用二分搜尋法搜尋
-
-
     // 使用二分搜尋法搜尋 mid
+
     uint32_t low = 90u;
     uint32_t high = 256u;
     uint32_t root = 0u;
